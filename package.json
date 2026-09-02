@@ -1,0 +1,12 @@
+{
+  "name": "still",
+  "version": "0.1.0",
+  "private": true,
+  "description": "One beautiful place at a time. Click for a new one.",
+  "scripts": {
+    "test": "node test/app.test.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.49.1"
+  }
+}
