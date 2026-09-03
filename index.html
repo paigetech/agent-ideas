@@ -1,0 +1,875 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0a0c0b">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Still — one beautiful place at a time</title>
+<style>
+  :root {
+    --ground: #0a0c0b;
+    --ink: #f2f4f2;
+    --muted: rgba(242, 244, 242, 0.62);
+    --faint: rgba(242, 244, 242, 0.28);
+    --chrome-bg: rgba(10, 12, 11, 0.42);
+    --fade: 900ms;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    height: 100%;
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font: 400 15px/1.5 ui-sans-serif, -apple-system, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    overscroll-behavior: none;
+  }
+
+  body {
+    /* No scrolling anywhere. There is nothing below the fold, on purpose. */
+    overflow: hidden;
+    cursor: pointer;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body.is-resting { cursor: none; }
+
+  /* ---------- the photo ---------- */
+
+  #stage {
+    position: fixed;
+    inset: 0;
+    background: var(--ground);
+  }
+
+  .layer {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: center;
+    opacity: 0;
+    transition: opacity var(--fade) ease;
+    will-change: opacity;
+  }
+
+  .layer.active { opacity: 1; }
+
+  body.fit-contain .layer { object-fit: contain; }
+
+  /* A soft vignette so the text at the edges stays readable on bright skies. */
+  #vignette {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    background:
+      linear-gradient(to top, rgba(0, 0, 0, 0.55) 0%, rgba(0, 0, 0, 0.18) 22%, rgba(0, 0, 0, 0) 45%),
+      linear-gradient(to bottom, rgba(0, 0, 0, 0.28) 0%, rgba(0, 0, 0, 0) 20%);
+    opacity: 0;
+    transition: opacity 400ms ease;
+  }
+
+  body.chrome-visible #vignette { opacity: 1; }
+
+  /* ---------- chrome (fades away when you stop moving) ---------- */
+
+  .chrome {
+    position: fixed;
+    z-index: 3;
+    opacity: 0;
+    transition: opacity 600ms ease;
+    pointer-events: none;
+  }
+
+  body.chrome-visible .chrome { opacity: 1; pointer-events: auto; }
+
+  #credit {
+    left: max(20px, env(safe-area-inset-left));
+    right: 96px;
+    bottom: max(18px, env(safe-area-inset-bottom));
+    max-width: min(60ch, calc(100vw - 130px));
+    font-size: 13px;
+    line-height: 1.45;
+    color: var(--muted);
+    text-shadow: 0 1px 14px rgba(0, 0, 0, 0.75);
+    cursor: default;
+  }
+
+  #credit .place {
+    display: block;
+    color: var(--ink);
+    font-size: 15px;
+    letter-spacing: 0.005em;
+    margin-bottom: 3px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  #credit a {
+    color: inherit;
+    text-decoration: none;
+    border-bottom: 1px solid var(--faint);
+  }
+
+  #credit a:hover { color: var(--ink); border-bottom-color: var(--muted); }
+
+  #controls {
+    right: max(16px, env(safe-area-inset-right));
+    bottom: max(14px, env(safe-area-inset-bottom));
+    display: flex;
+    gap: 4px;
+  }
+
+  .btn {
+    appearance: none;
+    width: 38px;
+    height: 38px;
+    display: grid;
+    place-items: center;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--muted);
+    font: inherit;
+    font-size: 15px;
+    cursor: pointer;
+    transition: background 200ms ease, color 200ms ease;
+  }
+
+  .btn:hover { background: var(--chrome-bg); color: var(--ink); }
+  .btn[aria-pressed="true"] { color: var(--ink); background: var(--chrome-bg); }
+  .btn svg { width: 19px; height: 19px; display: block; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+
+  /* ---------- centre messages ---------- */
+
+  #center {
+    position: fixed;
+    inset: 0;
+    z-index: 2;
+    display: grid;
+    place-items: center;
+    pointer-events: none;
+    text-align: center;
+    padding: 24px;
+  }
+
+  #center > div {
+    grid-area: 1 / 1;
+    max-width: 34ch;
+    padding: 12px 18px;
+    border-radius: 14px;
+    background: rgba(10, 12, 11, 0.5);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    color: var(--ink);
+    opacity: 0;
+    transition: opacity 800ms ease;
+  }
+
+  /* An empty message must not leave a floating blank pill behind. */
+  #center > div:empty { display: none; }
+
+  #center > div.show { opacity: 1; }
+
+  #status { font-size: 14px; letter-spacing: 0.02em; }
+  #status .err { color: var(--ink); display: block; margin-bottom: 10px; }
+  #status button {
+    pointer-events: auto;
+    margin-top: 6px;
+    padding: 7px 15px;
+    border: 1px solid var(--faint);
+    border-radius: 999px;
+    background: transparent;
+    color: var(--ink);
+    font: inherit;
+    font-size: 13px;
+    cursor: pointer;
+  }
+
+  #hint {
+    align-self: end;
+    max-width: none;
+    white-space: nowrap;
+    margin-bottom: 16vh;
+    background: rgba(10, 12, 11, 0.42);
+    font-size: 14px;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+  }
+
+  /* ---------- the gentle time check-in ---------- */
+
+  #checkin {
+    position: fixed;
+    left: 50%;
+    bottom: max(78px, calc(env(safe-area-inset-bottom) + 74px));
+    transform: translateX(-50%);
+    z-index: 4;
+    max-width: min(40ch, calc(100vw - 48px));
+    padding: 13px 18px;
+    border-radius: 14px;
+    background: rgba(10, 12, 11, 0.72);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border: 1px solid rgba(242, 244, 242, 0.1);
+    color: var(--muted);
+    font-size: 13.5px;
+    line-height: 1.5;
+    text-align: center;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 900ms ease;
+  }
+
+  #checkin.show { opacity: 1; pointer-events: auto; }
+  #checkin b { color: var(--ink); font-weight: 500; }
+  #checkin small { display: block; margin-top: 6px; color: var(--faint); font-size: 12px; }
+
+  /* ---------- breathing guide ---------- */
+
+  #breath {
+    position: fixed;
+    inset: 0;
+    z-index: 1;
+    display: none;
+    place-items: center;
+    pointer-events: none;
+  }
+
+  body.breathing #breath { display: grid; }
+
+  #breath .ring, #breath .word { grid-area: 1 / 1; }
+
+  #breath .ring {
+    width: 34vmin;
+    height: 34vmin;
+    border-radius: 50%;
+    /* A light ring for dark photos, a dark halo for bright ones. */
+    border: 1.5px solid rgba(255, 255, 255, 0.62);
+    box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.22), 0 0 26px rgba(0, 0, 0, 0.2);
+    background: radial-gradient(circle, rgba(0, 0, 0, 0.16), rgba(0, 0, 0, 0) 72%);
+    animation: breathe 11s ease-in-out infinite;
+  }
+
+  #breath .word {
+    padding: 7px 14px;
+    border-radius: 999px;
+    background: rgba(10, 12, 11, 0.5);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    font-size: 12.5px;
+    letter-spacing: 0.16em;
+    text-transform: lowercase;
+    color: var(--ink);
+    animation: breathe-word 11s ease-in-out infinite;
+  }
+
+  @keyframes breathe {
+    0%   { transform: scale(0.62); }
+    36%  { transform: scale(1); }
+    50%  { transform: scale(1); }
+    95%  { transform: scale(0.62); }
+    100% { transform: scale(0.62); }
+  }
+
+  @keyframes breathe-word {
+    0%, 30%   { opacity: 0.85; }
+    36%, 45%  { opacity: 0.3; }
+    55%, 90%  { opacity: 0.85; }
+    100%      { opacity: 0.85; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    :root { --fade: 220ms; }
+    #breath .ring, #breath .word { animation-duration: 11s; }
+    .layer { transition-duration: 220ms; }
+  }
+</style>
+</head>
+<body>
+
+<div id="stage"></div>
+
+<div id="vignette"></div>
+
+<div id="breath" aria-hidden="true">
+  <div class="ring"></div>
+  <div class="word">breathe</div>
+</div>
+
+<div id="center">
+  <div id="status" role="status" aria-live="polite"></div>
+  <div id="hint"></div>
+</div>
+
+<div id="checkin" role="status"></div>
+
+<div id="credit" class="chrome"></div>
+
+<div id="controls" class="chrome">
+  <button class="btn" id="btn-breathe" type="button" title="Breathing guide (B)" aria-pressed="false" aria-label="Breathing guide">
+    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"></circle><circle cx="12" cy="12" r="9" opacity="0.45"></circle></svg>
+  </button>
+  <button class="btn" id="btn-fit" type="button" title="Fill / fit the screen (C)" aria-pressed="false" aria-label="Fill or fit the screen">
+    <svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="M3 15l5-5 4 4 3-3 6 6"></path></svg>
+  </button>
+  <button class="btn" id="btn-full" type="button" title="Fullscreen (F)" aria-label="Fullscreen">
+    <svg viewBox="0 0 24 24"><path d="M4 9V5a1 1 0 011-1h4M20 9V5a1 1 0 00-1-1h-4M4 15v4a1 1 0 001 1h4M20 15v4a1 1 0 01-1 1h-4"></path></svg>
+  </button>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  // ---------------------------------------------------------------------------
+  // Where the photos come from.
+  //
+  // Wikimedia Commons: freely licensed, no API key, no account, no tracking.
+  // We only draw from Featured and Quality picture categories, which are
+  // human-curated, so almost everything is a genuinely good photograph.
+  //
+  // Category names on Commons shift over time, so rather than trusting this
+  // list we ask Commons which of them actually exist before using any of them.
+  // Add or remove lines freely — anything that does not resolve is ignored.
+  // ---------------------------------------------------------------------------
+
+  var CANDIDATE_CATEGORIES = [
+    'Category:Featured pictures of landscapes',
+    'Category:Featured pictures of natural landscapes',
+    'Category:Featured pictures of mountains',
+    'Category:Featured pictures of forests',
+    'Category:Featured pictures of waterfalls',
+    'Category:Featured pictures of lakes',
+    'Category:Featured pictures of rivers',
+    'Category:Featured pictures of seas',
+    'Category:Featured pictures of coasts',
+    'Category:Featured pictures of clouds',
+    'Category:Featured pictures of sunsets',
+    'Category:Featured pictures of trees',
+    'Category:Featured pictures of flowers',
+    'Category:Featured pictures of deserts',
+    'Category:Featured pictures of glaciers',
+    'Category:Featured pictures of caves',
+    'Category:Featured pictures of nature',
+    'Category:Featured pictures of natural phenomena',
+    'Category:Quality images of landscapes',
+    'Category:Quality images of natural landscapes',
+    'Category:Quality images of mountains',
+    'Category:Quality images of forests',
+    'Category:Quality images of waterfalls',
+    'Category:Quality images of lakes',
+    'Category:Quality images of coasts',
+    'Category:Quality images of sunsets',
+    'Category:Quality images of clouds',
+    'Category:Quality images of nature'
+  ];
+
+  var API = 'https://commons.wikimedia.org/w/api.php';
+  var CACHE_KEY = 'still.categories.v1';
+  var PREFS_KEY = 'still.prefs.v1';
+  var CACHE_TTL = 30 * 24 * 60 * 60 * 1000; // re-check which categories exist monthly
+  var MIN_QUEUE = 4;          // refill when fewer than this many scenes are waiting
+  var CHECKIN_AFTER = 15 * 60 * 1000; // the one gentle "still here?" nudge
+  var REST_AFTER = 2600;      // hide the chrome after this much stillness
+
+  // Skip anything that is technically in the category but is not a photograph.
+  var NOT_A_PHOTO = /\b(map|diagram|chart|graph|logo|seal|coat[ _]of[ _]arms|flag|panorama[ _]of[ _]the[ _]sky|scan|poster|drawing|painting|engraving|lithograph|illustration|sketch)\b/i;
+
+  // ---------------------------------------------------------------------------
+  // Small helpers
+  // ---------------------------------------------------------------------------
+
+  var $ = function (sel) { return document.querySelector(sel); };
+
+  function store(key, value) {
+    try {
+      if (value === undefined) {
+        var raw = localStorage.getItem(key);
+        return raw ? JSON.parse(raw) : null;
+      }
+      localStorage.setItem(key, JSON.stringify(value));
+    } catch (e) { /* private browsing, blocked storage — never fatal */ }
+    return null;
+  }
+
+  function shuffle(list) {
+    for (var i = list.length - 1; i > 0; i--) {
+      var j = Math.floor(Math.random() * (i + 1));
+      var t = list[i]; list[i] = list[j]; list[j] = t;
+    }
+    return list;
+  }
+
+  function pick(list) { return list[Math.floor(Math.random() * list.length)]; }
+
+  // Commons metadata arrives as HTML fragments. Parse it inertly and keep the text.
+  function plain(html) {
+    if (!html) return '';
+    try {
+      var doc = new DOMParser().parseFromString(String(html), 'text/html');
+      return (doc.body.textContent || '').replace(/\s+/g, ' ').trim();
+    } catch (e) {
+      return String(html).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+    }
+  }
+
+  function meta(extmetadata, field) {
+    var entry = extmetadata && extmetadata[field];
+    return entry ? plain(entry.value) : '';
+  }
+
+  function api(params) {
+    var url = new URL(API);
+    var base = { format: 'json', formatversion: '2', origin: '*' };
+    Object.keys(base).forEach(function (k) { url.searchParams.set(k, base[k]); });
+    Object.keys(params).forEach(function (k) { url.searchParams.set(k, params[k]); });
+
+    return fetch(url.toString(), { credentials: 'omit' }).then(function (res) {
+      if (!res.ok) throw new Error('Commons replied ' + res.status);
+      return res.json();
+    }).then(function (json) {
+      if (json.error) throw new Error(json.error.info || 'Commons API error');
+      return json;
+    });
+  }
+
+  // Ask for a copy roughly the size of this screen rather than the 40-megapixel
+  // original. Keeps a click instant even on a phone.
+  function targetWidth() {
+    var dpr = Math.min(window.devicePixelRatio || 1, 2);
+    var side = Math.max(window.innerWidth, window.innerHeight, 900);
+    return Math.min(2560, Math.max(1280, Math.round(side * dpr)));
+  }
+
+  // ---------------------------------------------------------------------------
+  // Finding usable categories
+  // ---------------------------------------------------------------------------
+
+  function resolveCategories() {
+    var cached = store(CACHE_KEY);
+    if (cached && cached.at && (Date.now() - cached.at) < CACHE_TTL &&
+        cached.names && cached.names.length) {
+      return Promise.resolve(cached.names);
+    }
+
+    // categoryinfo tells us both that a category exists and how much is in it.
+    return api({
+      action: 'query',
+      prop: 'categoryinfo',
+      titles: CANDIDATE_CATEGORIES.join('|')
+    }).then(function (json) {
+      var pages = (json.query && json.query.pages) || [];
+      var names = pages.filter(function (page) {
+        return page.categoryinfo && page.categoryinfo.files >= 15;
+      }).map(function (page) { return page.title; });
+
+      if (names.length) store(CACHE_KEY, { at: Date.now(), names: names });
+      return names;
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Fetching scenes
+  // ---------------------------------------------------------------------------
+
+  var IMAGE_INFO = {
+    prop: 'imageinfo',
+    iiprop: 'url|size|mime|extmetadata',
+    iiextmetadatafilter: 'Artist|Credit|LicenseShortName|LicenseUrl|ObjectName|ImageDescription'
+  };
+
+  function toScene(page) {
+    var info = page.imageinfo && page.imageinfo[0];
+    if (!info || !info.thumburl) return null;
+    if (info.mime !== 'image/jpeg' && info.mime !== 'image/png') return null;
+    if (info.width && info.width < 1200) return null;
+    if (NOT_A_PHOTO.test(page.title)) return null;
+
+    var name = meta(info.extmetadata, 'ObjectName');
+    if (!name) {
+      name = page.title.replace(/^File:/, '').replace(/\.[a-z0-9]+$/i, '').replace(/[_-]+/g, ' ');
+    }
+
+    return {
+      key: page.title,
+      src: info.thumburl,
+      page: info.descriptionurl || ('https://commons.wikimedia.org/wiki/' + encodeURIComponent(page.title)),
+      name: name,
+      artist: meta(info.extmetadata, 'Artist') || meta(info.extmetadata, 'Credit'),
+      license: meta(info.extmetadata, 'LicenseShortName'),
+      licenseUrl: meta(info.extmetadata, 'LicenseUrl')
+    };
+  }
+
+  function fetchFromCategory(category) {
+    var params = {
+      action: 'query',
+      generator: 'categorymembers',
+      gcmtitle: category,
+      gcmtype: 'file',
+      gcmlimit: '100',
+      iiurlwidth: String(targetWidth())
+    };
+    Object.keys(IMAGE_INFO).forEach(function (k) { params[k] = IMAGE_INFO[k]; });
+
+    return api(params).then(function (json) {
+      return ((json.query && json.query.pages) || []).map(toScene).filter(Boolean);
+    });
+  }
+
+  // Last resort if not one category resolves — a plain search still finds photos.
+  function fetchFromSearch() {
+    var terms = pick([
+      'landscape mountain valley', 'forest morning light', 'coast cliffs sea',
+      'lake reflection dawn', 'waterfall river rocks', 'desert dunes sky',
+      'autumn trees mist', 'alpine meadow flowers'
+    ]);
+    var params = {
+      action: 'query',
+      generator: 'search',
+      gsrsearch: terms + ' filetype:bitmap',
+      gsrnamespace: '6',
+      gsrlimit: '50',
+      iiurlwidth: String(targetWidth())
+    };
+    Object.keys(IMAGE_INFO).forEach(function (k) { params[k] = IMAGE_INFO[k]; });
+
+    return api(params).then(function (json) {
+      return ((json.query && json.query.pages) || []).map(toScene).filter(Boolean);
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // The queue: always keep the next scene already downloaded
+  // ---------------------------------------------------------------------------
+
+  var categories = null;
+  var queue = [];
+  var seen = Object.create(null);
+  var refilling = null;
+
+  function refill() {
+    if (refilling) return refilling;
+
+    refilling = Promise.resolve(categories || resolveCategories().then(function (names) {
+      categories = names;
+      return names;
+    })).then(function (names) {
+      return (names && names.length) ? fetchFromCategory(pick(names)) : fetchFromSearch();
+    }).then(function (scenes) {
+      var fresh = shuffle(scenes).filter(function (scene) {
+        if (seen[scene.key]) return false;
+        seen[scene.key] = true;
+        return true;
+      });
+
+      // Every scene in this batch has been shown already; try somewhere else.
+      if (!fresh.length && queue.length === 0) {
+        seen = Object.create(null);
+      }
+
+      queue = queue.concat(fresh);
+      refilling = null;
+      return queue.length;
+    }).catch(function (err) {
+      refilling = null;
+      throw err;
+    });
+
+    return refilling;
+  }
+
+  // Resolves once the pixels are actually decoded. The element itself is kept on
+  // the scene and later moved into the page, so displaying it costs no second
+  // request and cannot fail halfway.
+  function preload(scene) {
+    return new Promise(function (resolve, reject) {
+      var img = new Image();
+      img.decoding = 'async';
+      img.alt = scene.name || '';
+      img.onload = function () { scene.el = img; resolve(scene); };
+      img.onerror = function () { reject(new Error('image failed')); };
+      img.src = scene.src;
+    });
+  }
+
+  // Resolves with a scene whose pixels are already in the browser's cache.
+  function nextReadyScene(attempt) {
+    attempt = attempt || 0;
+    if (attempt > 6) return Promise.reject(new Error('could not load a photo'));
+
+    var have = queue.length ? Promise.resolve() : refill();
+
+    return have.then(function () {
+      var scene = queue.shift();
+      if (!scene) return nextReadyScene(attempt + 1);
+
+      if (queue.length < MIN_QUEUE && !refilling) {
+        refill().catch(function () { /* the current photo still shows */ });
+      }
+
+      return preload(scene).catch(function () { return nextReadyScene(attempt + 1); });
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Showing a scene
+  // ---------------------------------------------------------------------------
+
+  var stage = $('#stage');
+  var creditEl = $('#credit');
+  var statusEl = $('#status');
+  var hintEl = $('#hint');
+  var advancing = false;
+  var upcoming = null;
+
+  function setStatus(html) {
+    statusEl.innerHTML = html || '';
+    statusEl.classList.toggle('show', !!html);
+  }
+
+  function setHint(text) {
+    hintEl.textContent = text || '';
+    hintEl.classList.toggle('show', !!text);
+  }
+
+  // Metadata comes from Commons, so never let it decide a URL scheme.
+  function safeUrl(url) {
+    try {
+      var parsed = new URL(url, location.href);
+      return (parsed.protocol === 'https:' || parsed.protocol === 'http:') ? parsed.href : '';
+    } catch (e) { return ''; }
+  }
+
+  function link(url, label) {
+    var href = safeUrl(url);
+    return href
+      ? '<a href="' + escapeHtml(href) + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(label) + '</a>'
+      : escapeHtml(label);
+  }
+
+  function renderCredit(scene) {
+    var bits = []; // each entry is already-escaped HTML
+    if (scene.artist) bits.push(escapeHtml(scene.artist));
+    if (scene.license) bits.push(link(scene.licenseUrl, scene.license));
+    bits.push(link(scene.page, 'Wikimedia Commons'));
+
+    creditEl.innerHTML =
+      '<span class="place">' + escapeHtml(scene.name) + '</span>' +
+      bits.join(' &middot; ');
+  }
+
+  function escapeHtml(text) {
+    return String(text).replace(/[&<>"']/g, function (ch) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch];
+    });
+  }
+
+  function show(scene) {
+    if (!scene || !scene.el) return;
+
+    var img = scene.el;
+    img.className = 'layer';
+
+    var previous = stage.querySelector('.layer.active');
+    stage.appendChild(img);
+
+    void img.offsetWidth; // flush styles so the crossfade actually runs
+    img.classList.add('active');
+
+    if (previous) {
+      previous.classList.remove('active');
+      setTimeout(function () {
+        if (previous.parentNode === stage) stage.removeChild(previous);
+      }, 1400);
+    }
+
+    // Impatient clicking can stack up fading layers faster than they retire.
+    // Full-screen photos are expensive on a phone, so keep only the outgoing one.
+    var stacked = stage.children;
+    while (stacked.length > 2) stage.removeChild(stacked[0]);
+
+    renderCredit(scene);
+  }
+
+  function advance() {
+    if (advancing) return;
+    advancing = true;
+    setStatus('');
+
+    // Usually this is already sitting in memory, so the swap is immediate.
+    var ready = upcoming || nextReadyScene();
+    upcoming = null;
+
+    var slow = setTimeout(function () { setStatus('finding somewhere quiet&hellip;'); }, 900);
+
+    ready.then(function (scene) {
+      return scene || nextReadyScene();
+    }).then(function (scene) {
+      clearTimeout(slow);
+      setStatus('');
+      setHint('');
+      show(scene);
+      advancing = false;
+      upcoming = nextReadyScene().catch(function () { return null; });
+    }).catch(function (err) {
+      clearTimeout(slow);
+      advancing = false;
+      setStatus(
+        '<span class="err">' + escapeHtml(err && err.message ? err.message : 'Something went wrong') + '</span>' +
+        'Wikimedia Commons could not be reached. Check the connection.' +
+        '<br><button type="button" id="retry">Try again</button>'
+      );
+      var retry = $('#retry');
+      if (retry) {
+        retry.addEventListener('click', function (e) {
+          e.stopPropagation();
+          setStatus('');
+          advance();
+        });
+      }
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Chrome that gets out of the way
+  // ---------------------------------------------------------------------------
+
+  var restTimer = null;
+
+  function wake() {
+    document.body.classList.add('chrome-visible');
+    document.body.classList.remove('is-resting');
+    clearTimeout(restTimer);
+    restTimer = setTimeout(function () {
+      document.body.classList.remove('chrome-visible');
+      document.body.classList.add('is-resting');
+    }, REST_AFTER);
+  }
+
+  ['mousemove', 'touchstart', 'keydown', 'wheel'].forEach(function (evt) {
+    window.addEventListener(evt, wake, { passive: true });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Preferences
+  // ---------------------------------------------------------------------------
+
+  var prefs = store(PREFS_KEY) || { breathing: false, contain: false, checkin: true };
+
+  function savePrefs() { store(PREFS_KEY, prefs); }
+
+  function applyPrefs() {
+    document.body.classList.toggle('breathing', !!prefs.breathing);
+    document.body.classList.toggle('fit-contain', !!prefs.contain);
+    $('#btn-breathe').setAttribute('aria-pressed', String(!!prefs.breathing));
+    $('#btn-fit').setAttribute('aria-pressed', String(!!prefs.contain));
+  }
+
+  function toggleBreathing() { prefs.breathing = !prefs.breathing; savePrefs(); applyPrefs(); }
+  function toggleFit() { prefs.contain = !prefs.contain; savePrefs(); applyPrefs(); }
+
+  function toggleFullscreen() {
+    if (document.fullscreenElement) {
+      var exit = document.exitFullscreen();
+      if (exit && exit.catch) exit.catch(function () {});
+    } else if (document.documentElement.requestFullscreen) {
+      document.documentElement.requestFullscreen().catch(function () {});
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // One gentle check-in, and only one
+  // ---------------------------------------------------------------------------
+
+  var checkinEl = $('#checkin');
+  var checkinShown = false;
+  var activeMs = 0;
+  var lastTick = Date.now();
+
+  setInterval(function () {
+    var now = Date.now();
+    // Only count time this tab is actually in front.
+    if (!document.hidden) activeMs += now - lastTick;
+    lastTick = now;
+
+    if (!checkinShown && prefs.checkin && activeMs >= CHECKIN_AFTER) {
+      checkinShown = true;
+      checkinEl.innerHTML =
+        "You've been here <b>" + Math.round(CHECKIN_AFTER / 60000) + " minutes</b>. " +
+        'Still what you need right now?' +
+        '<small>Tap this note to dismiss it. It only appears once.</small>';
+      checkinEl.classList.add('show');
+      wake();
+    }
+  }, 5000);
+
+  checkinEl.addEventListener('click', function (e) {
+    e.stopPropagation();
+    checkinEl.classList.remove('show');
+  });
+
+  // ---------------------------------------------------------------------------
+  // Input — the whole page is the button
+  // ---------------------------------------------------------------------------
+
+  document.addEventListener('click', function (e) {
+    var target = e.target;
+    if (target && target.closest &&
+        target.closest('#controls, #credit, #checkin, #status')) {
+      return;
+    }
+    advance();
+  });
+
+  document.addEventListener('keydown', function (e) {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+    if (e.key === ' ' || e.key === 'Enter' || e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+      e.preventDefault();
+      advance();
+    } else if (e.key === 'b' || e.key === 'B') {
+      toggleBreathing();
+    } else if (e.key === 'c' || e.key === 'C') {
+      toggleFit();
+    } else if (e.key === 'f' || e.key === 'F') {
+      toggleFullscreen();
+    }
+  });
+
+  $('#btn-breathe').addEventListener('click', function (e) { e.stopPropagation(); toggleBreathing(); });
+  $('#btn-fit').addEventListener('click', function (e) { e.stopPropagation(); toggleFit(); });
+  $('#btn-full').addEventListener('click', function (e) { e.stopPropagation(); toggleFullscreen(); });
+
+  // Re-request a sharper copy if the window grows a lot (laptop -> external monitor).
+  var lastWidth = targetWidth();
+  window.addEventListener('resize', function () {
+    var now = targetWidth();
+    if (now > lastWidth * 1.4) { lastWidth = now; queue = []; }
+  });
+
+  // ---------------------------------------------------------------------------
+  // Go
+  // ---------------------------------------------------------------------------
+
+  applyPrefs();
+  wake();
+  setStatus('finding somewhere quiet&hellip;');
+  advance();
+  setTimeout(function () {
+    if (!statusEl.textContent) setHint('click anywhere for somewhere new');
+  }, 2200);
+  setTimeout(function () { setHint(''); }, 9000);
+})();
+</script>
+</body>
+</html>
