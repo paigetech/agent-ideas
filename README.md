@@ -25,9 +25,8 @@ open agent-ideas/index.html          # macOS
 xdg-open agent-ideas/index.html      # Linux
 ```
 
-To use it on a phone, push this repo to GitHub Pages (Settings → Pages → deploy
-from `main`) and add the URL to your home screen. It runs fullscreen from there
-like an app.
+For a phone, deploy it (below) and add the URL to your home screen. It runs
+fullscreen from there, with its own icon, like an app.
 
 ## Using it
 
@@ -130,6 +129,35 @@ It's a prototype, and these are the honest gaps:
 - The frame's tilt is fixed. Re-tilting it per photo would be more lifelike but
   would also mean the one thing meant to hold still does not.
 
+## Deploying
+
+`.github/workflows/pages.yml` runs the tests on every push and pull request,
+and publishes to GitHub Pages when they pass on `main`. It calls
+`actions/configure-pages` with `enablement: true`, so the first successful run
+turns Pages on by itself — there is no setting to go and find. The site lands at
+`https://<user>.github.io/<repo>/`.
+
+Only `index.html`, the icons, the manifest and the font licence are published.
+`scripts/stage-site.sh` decides that, and `test/site.test.mjs` stages with the
+same script and drives the result over HTTP under a subpath — so a relative path
+that only works from `file://`, a missing asset, or anything reaching for a
+third-party host fails CI rather than the live site.
+
+**One thing to know first: Pages availability depends on the repository.** It is
+free for public repositories. For a **private** repository it needs GitHub Pro,
+Team or Enterprise — otherwise the deploy job fails when it tries to enable
+Pages.
+
+**And in every one of those cases the published site itself is public.** Making
+a private repo's Pages site private requires Enterprise. Deploying does not
+expose the repository, but it does put the page on the open web at a guessable
+URL. For this app that is close to harmless — it is a photo viewer holding no
+data of yours, and there is nothing to log in to — but it is worth deciding
+rather than discovering.
+
+If you would rather not publish at all, the app needs no server. Opening
+`index.html` works, and syncing the folder to a phone works too.
+
 ## The handwriting
 
 The caption is set in [Caveat](https://github.com/googlefonts/caveat), embedded
@@ -145,11 +173,17 @@ fallback in case the embedded font ever fails to load.
 
 ## Tests
 
-Browser tests cover the queue and preloading, the metadata filtering, the
+Two browser suites, both mocking the Commons API so they run with no network
+and never hit Wikimedia's servers.
+
+`test/app.test.mjs` covers the queue and preloading, the metadata filtering, the
 polaroid's geometry and the frame staying put between photos, degraded network
-conditions, the check-in timer, and layout from a phone to a wide monitor. They
-mock the Commons API so they run without a network and don't hit Wikimedia's
-servers.
+conditions, the check-in timer, and layout from a phone to a wide monitor.
+
+`test/site.test.mjs` covers the published artifact: it stages the site with the
+deploy script and serves it under a project-page subpath, checking the app runs
+there, that every relative asset resolves, that nothing private is published,
+and that no request goes to a third party.
 
 ```
 npm install

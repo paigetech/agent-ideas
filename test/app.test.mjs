@@ -6,39 +6,11 @@
 //   npm i playwright && npx playwright install chromium
 //   node test/app.test.mjs
 
-import { chromium } from 'playwright';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { existsSync, readdirSync } from 'node:fs';
-import zlib from 'node:zlib';
+import { launch } from './browser.mjs';
 
 const APP = 'file://' + join(dirname(fileURLToPath(import.meta.url)), '..', 'index.html');
-
-// --------------------------------------------------------------------------
-// Launching, wherever Chromium happens to live
-// --------------------------------------------------------------------------
-
-function discoverChromium() {
-  const root = process.env.PLAYWRIGHT_BROWSERS_PATH;
-  if (!root || !existsSync(root)) return undefined;
-  for (const entry of readdirSync(root)) {
-    if (!entry.startsWith('chromium-')) continue;
-    const bin = join(root, entry, 'chrome-linux', 'chrome');
-    if (existsSync(bin)) return bin;
-  }
-  return undefined;
-}
-
-async function launch() {
-  const args = ['--no-sandbox'];
-  try {
-    return await chromium.launch({ args });
-  } catch (err) {
-    const executablePath = discoverChromium();
-    if (!executablePath) throw err;
-    return chromium.launch({ args, executablePath });
-  }
-}
 
 // --------------------------------------------------------------------------
 // Fixtures

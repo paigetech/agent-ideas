@@ -1,0 +1,14 @@
+{
+  "name": "Still",
+  "short_name": "Still",
+  "description": "One beautiful place at a time. Click for a new one.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#33605d",
+  "theme_color": "#33605d",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
