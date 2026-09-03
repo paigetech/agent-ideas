@@ -79,7 +79,7 @@ function check(name, pass, detail = '') {
 }
 
 const shownSrc = (page) => page.evaluate(() =>
-  document.querySelector('.layer.active')?.getAttribute('src') || null);
+  document.querySelector('.shot.active')?.getAttribute('src') || null);
 
 const browser = await launch();
 
@@ -143,24 +143,25 @@ console.log('\n# showing a photo');
 {
   const { ctx, page, calls, errors } = await mount();
   await page.goto(APP);
-  await page.waitForSelector('.layer.active', { timeout: 10000 });
+  await page.waitForSelector('.shot.active', { timeout: 10000 });
 
   check('a photo appears on load', !!(await shownSrc(page)));
 
-  const credit = await page.textContent('#credit');
-  check('credit names the place, the photographer and the licence',
+  const credit = await page.textContent('#caption');
+  check('the handwritten caption names the place, the photographer and the licence',
     /Lake .* at dawn/.test(credit) && /Photographer/.test(credit) &&
-    /CC BY-SA 4\.0/.test(credit) && /Wikimedia Commons/.test(credit));
+    /CC BY-SA 4\.0/.test(credit) && /Commons/.test(credit));
 
   check('licence is a real link, and HTML in the metadata is stripped',
-    (await page.getAttribute('#credit a', 'href')) ===
+    (await page.getAttribute('#caption a', 'href')) ===
       'https://creativecommons.org/licenses/by-sa/4.0' && !/</.test(credit));
 
   const members = calls.filter((u) => u.searchParams.get('generator') === 'categorymembers');
   check('only uses a category Commons confirmed exists', members.length > 0,
     members[0]?.searchParams.get('gcmtitle'));
-  check('requests a screen-sized copy, not the full-resolution original',
-    Number(members[0].searchParams.get('iiurlwidth')) >= 1280);
+  const asked = Number(members[0].searchParams.get('iiurlwidth'));
+  check('requests a copy sized to the polaroid, not the full-resolution original',
+    asked >= 800 && asked <= 2048, asked + 'px');
   check('sends origin=* so CORS works from file://',
     members[0].searchParams.get('origin') === '*');
 
@@ -177,12 +178,12 @@ console.log('\n# clicking through');
 {
   const { ctx, page, errors } = await mount();
   await page.goto(APP);
-  await page.waitForSelector('.layer.active');
+  await page.waitForSelector('.shot.active');
 
   const first = await shownSrc(page);
   await page.mouse.click(640, 400);
   await page.waitForFunction((prev) =>
-    document.querySelector('.layer.active')?.getAttribute('src') !== prev, first, { timeout: 5000 });
+    document.querySelector('.shot.active')?.getAttribute('src') !== prev, first, { timeout: 5000 });
   check('clicking anywhere shows a different photo', (await shownSrc(page)) !== first);
 
   // The whole point: the next one is already in memory, so this is a swap.
@@ -190,7 +191,7 @@ console.log('\n# clicking through');
   const cur = await shownSrc(page);
   await page.keyboard.press('Space');
   await page.waitForFunction((prev) =>
-    document.querySelector('.layer.active')?.getAttribute('src') !== prev, cur, { timeout: 5000 });
+    document.querySelector('.shot.active')?.getAttribute('src') !== prev, cur, { timeout: 5000 });
   const swapMs = Date.now() - t0;
   check('the next photo is preloaded, so the swap is instant', swapMs < 250, swapMs + 'ms');
 
@@ -206,7 +207,7 @@ console.log('\n# clicking through');
 
   await page.waitForTimeout(2000);
   check('stacked layers are cleaned up afterwards',
-    (await page.evaluate(() => document.querySelectorAll('#stage .layer').length)) <= 2);
+    (await page.evaluate(() => document.querySelectorAll('#window .shot').length)) <= 2);
   check('refills the queue without being asked',
     (await page.evaluate(() => document.querySelectorAll('img').length)) <= 2);
 
@@ -215,11 +216,111 @@ console.log('\n# clicking through');
 }
 
 // --------------------------------------------------------------------------
+console.log('\n# the polaroid');
+{
+  const { ctx, page, errors } = await mount();
+  await page.goto(APP);
+  await page.waitForSelector('.shot.active', { timeout: 10000 });
+
+  // The frame is a physical object on a desk: only what is inside it changes.
+  const frameBefore = await page.locator('#polaroid').boundingBox();
+  const windowBefore = await page.locator('#window').boundingBox();
+  const captionBefore = await page.textContent('#caption');
+  await page.evaluate(() => { document.querySelector('#polaroid').dataset.same = 'yes'; });
+
+  const shot = await shownSrc(page);
+  await page.mouse.click(640, 400);
+  await page.waitForFunction((prev) =>
+    document.querySelector('.shot.active')?.getAttribute('src') !== prev, shot, { timeout: 5000 });
+  await page.waitForTimeout(900);
+
+  const frameAfter = await page.locator('#polaroid').boundingBox();
+  const windowAfter = await page.locator('#window').boundingBox();
+
+  check('the frame is never rebuilt, only the picture inside it',
+    (await page.getAttribute('#polaroid', 'data-same')) === 'yes');
+  check('the frame does not move or resize on a new photo',
+    JSON.stringify(frameBefore) === JSON.stringify(frameAfter) &&
+    JSON.stringify(windowBefore) === JSON.stringify(windowAfter));
+  check('the caption changes with the picture',
+    (await page.textContent('#caption')) !== captionBefore);
+
+  // The frame is tilted, so getBoundingClientRect reports the axis-aligned box
+  // around a rotated rectangle. Measure the layout box instead, which is the
+  // geometry in the polaroid's own coordinate space.
+  const geom = await page.evaluate(() => {
+    const box = (el) => ({ w: el.offsetWidth, h: el.offsetHeight, top: el.offsetTop });
+    const el = document.querySelector('#caption');
+    return {
+      frame: box(document.querySelector('#polaroid')),
+      window: box(document.querySelector('#window')),
+      caption: box(el),
+      family: getComputedStyle(el).fontFamily,
+      tilted: getComputedStyle(document.querySelector('#polaroid')).transform !== 'none',
+    };
+  });
+
+  // Polaroid 600: 3.5 x 4.25 overall, image area 3.108 x 3.024.
+  check('the frame keeps Polaroid 600 proportions',
+    Math.abs(geom.frame.w / geom.frame.h - 3.5 / 4.25) < 0.005,
+    (geom.frame.w / geom.frame.h).toFixed(4));
+  check('the picture area is near-square, as the format is',
+    Math.abs(geom.window.w / geom.window.h - 3.108 / 3.024) < 0.01,
+    (geom.window.w / geom.window.h).toFixed(4));
+  check('the base is the deep border you write on',
+    geom.frame.h - (geom.window.top + geom.window.h) > geom.frame.w * 0.25,
+    Math.round(geom.frame.h - (geom.window.top + geom.window.h)) + 'px');
+  check('the frame sits at a slight angle, the way one would on a desk',
+    geom.tilted);
+
+  check('the caption is set in a handwriting face',
+    /Caveat|Bradley|Script|Print|Marker|Chalkboard|cursive/i.test(geom.family),
+    geom.family.split(',')[0]);
+  check('the handwriting sits on the base, below the picture',
+    geom.caption.top >= geom.window.top + geom.window.h - 1 &&
+    geom.caption.top + geom.caption.h <= geom.frame.h + 1);
+
+  check('the background is teal', await page.evaluate(() => {
+    const bg = getComputedStyle(document.body).backgroundColor;
+    const [r, g, b] = bg.match(/\d+/g).map(Number);
+    return g > r && b > r && Math.abs(g - b) < 40;   // green-blue, red-poor
+  }));
+
+  check('no page errors', errors.length === 0, errors.join(' | '));
+  await ctx.close();
+}
+
+// --------------------------------------------------------------------------
+console.log('\n# the frame fits the screen');
+for (const [label, viewport] of [
+  ['a laptop', { width: 1280, height: 800 }],
+  ['a wide monitor', { width: 2560, height: 1080 }],
+  ['a phone', { width: 390, height: 844 }],
+  ['a short window', { width: 1100, height: 480 }],
+]) {
+  const { ctx, page } = await mount({ viewport });
+  await page.goto(APP);
+  await page.waitForSelector('.shot.active', { timeout: 10000 });
+  const box = await page.locator('#polaroid').boundingBox();
+  const fits = box.x >= -1 && box.y >= -1 &&
+    box.x + box.width <= viewport.width + 1 &&
+    box.y + box.height <= viewport.height + 1;
+  check(`the whole polaroid is on screen on ${label}`, fits,
+    `${Math.round(box.width)}x${Math.round(box.height)} in ${viewport.width}x${viewport.height}`);
+  const overflow = await page.evaluate(() => ({
+    x: document.documentElement.scrollWidth - window.innerWidth,
+    y: document.documentElement.scrollHeight - window.innerHeight,
+  }));
+  check(`nothing scrolls on ${label}`, overflow.x <= 0 && overflow.y <= 0, JSON.stringify(overflow));
+  await ctx.close();
+}
+
+// --------------------------------------------------------------------------
 console.log('\n# controls and preferences');
 {
   const { ctx, page, errors } = await mount();
   await page.goto(APP);
-  await page.waitForSelector('.layer.active');
+  await page.waitForSelector('.shot.active');
   await page.mouse.move(640, 400);
 
   await page.click('#btn-breathe');
@@ -229,14 +330,14 @@ console.log('\n# controls and preferences');
 
   await page.click('#btn-fit');
   check('fit switches the photo to contain', await page.evaluate(() =>
-    getComputedStyle(document.querySelector('.layer.active')).objectFit === 'contain'));
+    getComputedStyle(document.querySelector('.shot.active')).objectFit === 'contain'));
 
   await page.keyboard.press('b');
   check('the b key turns breathing back off',
     !(await page.evaluate(() => document.body.classList.contains('breathing'))));
 
   await page.reload();
-  await page.waitForSelector('.layer.active');
+  await page.waitForSelector('.shot.active');
   check('preferences survive a reload', await page.evaluate(() =>
     document.body.classList.contains('fit-contain') &&
     !document.body.classList.contains('breathing')));
@@ -256,7 +357,7 @@ console.log('\n# the interface gets out of the way');
 {
   const { ctx, page } = await mount();
   await page.goto(APP);
-  await page.waitForSelector('.layer.active');
+  await page.waitForSelector('.shot.active');
   await page.mouse.move(640, 400);
   await page.waitForTimeout(300);
   check('chrome is visible while you are moving',
@@ -276,7 +377,7 @@ console.log('\n# when things go wrong');
 {
   const { ctx, page, calls, errors } = await mount({ categoryFiles: 0 });
   await page.goto(APP);
-  await page.waitForSelector('.layer.active', { timeout: 10000 });
+  await page.waitForSelector('.shot.active', { timeout: 10000 });
   check('falls back to search when no category resolves',
     calls.some((u) => u.searchParams.get('generator') === 'search'));
   check('no page errors on the fallback path', errors.length === 0, errors.join(' | '));
@@ -287,9 +388,9 @@ console.log('\n# when things go wrong');
   let n = 0;
   const { ctx, page, errors } = await mount({ imageFailFor: () => (n++ % 3 !== 2) });
   await page.goto(APP);
-  await page.waitForSelector('.layer.active', { timeout: 15000 });
+  await page.waitForSelector('.shot.active', { timeout: 15000 });
   check('skips photos that fail to download and shows one that works',
-    (await page.evaluate(() => document.querySelector('.layer.active').naturalWidth)) > 0);
+    (await page.evaluate(() => document.querySelector('.shot.active').naturalWidth)) > 0);
   check('no page errors while skipping', errors.length === 0, errors.join(' | '));
   await ctx.close();
 }
@@ -311,11 +412,11 @@ console.log('\n# when things go wrong');
   await page.goto(APP);
   await page.waitForSelector('#retry', { timeout: 15000 });
   check('offline shows a plain-language message, not a stack trace',
-    /could not be reached/i.test(await page.textContent('#status')));
+    /could not be reached/i.test(await page.textContent('#window-msg')));
 
   online = true;
   await page.click('#retry');
-  await page.waitForSelector('.layer.active', { timeout: 15000 });
+  await page.waitForSelector('.shot.active', { timeout: 15000 });
   check('retry recovers once the network is back', !!(await shownSrc(page)));
   check('no unhandled rejections while offline', errors.length === 0, errors.join(' | '));
   await ctx.close();
@@ -326,7 +427,7 @@ console.log('\n# the check-in');
 {
   const { ctx, page } = await mount({ virtualClock: true });
   await page.goto(APP);
-  await page.waitForSelector('.layer.active', { timeout: 15000 });
+  await page.waitForSelector('.shot.active', { timeout: 15000 });
   const shown = () => page.evaluate(() =>
     document.querySelector('#checkin').classList.contains('show'));
 
@@ -350,7 +451,7 @@ console.log('\n# the check-in');
 {
   const { ctx, page } = await mount({ virtualClock: true });
   await page.goto(APP);
-  await page.waitForSelector('.layer.active', { timeout: 15000 });
+  await page.waitForSelector('.shot.active', { timeout: 15000 });
   await page.evaluate(() =>
     Object.defineProperty(document, 'hidden', { get: () => true, configurable: true }));
   await page.clock.runFor('40:00');
@@ -367,7 +468,7 @@ console.log('\n# on a phone');
     contextOpts: { deviceScaleFactor: 3, isMobile: true, hasTouch: true },
   });
   await page.goto(APP);
-  await page.waitForSelector('.layer.active', { timeout: 10000 });
+  await page.waitForSelector('.shot.active', { timeout: 10000 });
 
   const overflow = await page.evaluate(() => ({
     x: document.documentElement.scrollWidth - window.innerWidth,
@@ -378,7 +479,7 @@ console.log('\n# on a phone');
   const before = await shownSrc(page);
   await page.touchscreen.tap(195, 400);
   await page.waitForFunction((p) =>
-    document.querySelector('.layer.active')?.getAttribute('src') !== p, before, { timeout: 5000 });
+    document.querySelector('.shot.active')?.getAttribute('src') !== p, before, { timeout: 5000 });
   check('tapping advances', true);
   await ctx.close();
 }
