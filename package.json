@@ -4,7 +4,7 @@
   "private": true,
   "description": "One beautiful place at a time. Click for a new one.",
   "scripts": {
-    "test": "node test/app.test.mjs"
+    "test": "node test/app.test.mjs && node test/site.test.mjs"
   },
   "devDependencies": {
     "playwright": "^1.49.1"
