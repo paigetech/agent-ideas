@@ -24,6 +24,14 @@ const JPEG = Buffer.from(
 
 const body = (pages) => JSON.stringify({ batchcomplete: true, query: { pages } });
 
+// Distinct, plausible place names — deliberately free of digits, since a
+// number in a caption is exactly what tidyName is supposed to remove.
+const HEAD = ['Loch', 'Lake', 'Tarn', 'Fjord', 'Cirque', 'Glen', 'Vale', 'Corrie'];
+const TAIL = ['Maree', 'Coe', 'Braies', 'Bled', 'Sylvan', 'Ashness',
+              'Wastwater', 'Rydal', 'Buttermere', 'Ennerdale'];
+const placeName = (i) =>
+  `${HEAD[i % HEAD.length]} ${TAIL[Math.floor(i / HEAD.length) % TAIL.length]} at dawn`;
+
 function filePage(i, opts = {}) {
   return {
     ns: 6,
@@ -35,7 +43,7 @@ function filePage(i, opts = {}) {
       width: opts.width ?? 4000,
       height: 3000,
       extmetadata: {
-        ObjectName: { value: `<span lang="en">Lake ${i} at dawn</span>` },
+        ObjectName: { value: `<span lang="en">${placeName(i)}</span>` },
         Artist: { value: `<a href="//commons.wikimedia.org/wiki/User:P">Photographer ${i}</a>` },
         LicenseShortName: { value: 'CC BY-SA 4.0' },
         LicenseUrl: { value: 'https://creativecommons.org/licenses/by-sa/4.0' },
@@ -59,7 +67,7 @@ const browser = await launch();
 // category look empty; `imageFailFor` aborts selected image requests.
 async function mount({
   categoryFiles = 300, imageFailFor = null, viewport = { width: 1280, height: 800 },
-  contextOpts = {}, batch = 40, virtualClock = false,
+  contextOpts = {}, batch = 40, virtualClock = false, customPages = null,
 } = {}) {
   const ctx = await browser.newContext({ viewport, ...contextOpts });
   const page = await ctx.newPage();
@@ -76,6 +84,10 @@ async function mount({
         titles.map((t, i) => (i % 3 === 0 || !categoryFiles
           ? { ns: 14, title: t, missing: true }
           : { ns: 14, title: t, categoryinfo: { files: categoryFiles } })))});
+    }
+
+    if (customPages) {
+      return route.fulfill({ contentType: 'application/json', body: body(customPages) });
     }
 
     const generator = url.searchParams.get('generator');
@@ -119,14 +131,20 @@ console.log('\n# showing a photo');
 
   check('a photo appears on load', !!(await shownSrc(page)));
 
-  const credit = await page.textContent('#caption');
-  check('the handwritten caption names the place, the photographer and the licence',
-    /Lake .* at dawn/.test(credit) && /Photographer/.test(credit) &&
-    /CC BY-SA 4\.0/.test(credit) && /Commons/.test(credit));
+  // The two caption lines, read separately — textContent would run them
+  // together and break word boundaries across the join.
+  const place = (await page.textContent('#caption .place')).trim();
+  const byline = (await page.textContent('#caption .by')).trim();
+  check('the place is written on the base',
+    /\bat dawn$/.test(place), place);
+  check('the photographer and licence are written underneath',
+    /Photographer/.test(byline) && /CC BY-SA 4\.0/.test(byline) && /Commons/.test(byline),
+    byline);
 
   check('licence is a real link, and HTML in the metadata is stripped',
     (await page.getAttribute('#caption a', 'href')) ===
-      'https://creativecommons.org/licenses/by-sa/4.0' && !/</.test(credit));
+      'https://creativecommons.org/licenses/by-sa/4.0' &&
+    !/[<>]/.test(place + byline));
 
   const members = calls.filter((u) => u.searchParams.get('generator') === 'categorymembers');
   check('only uses a category Commons confirmed exists', members.length > 0,
@@ -284,6 +302,102 @@ for (const [label, viewport] of [
     y: document.documentElement.scrollHeight - window.innerHeight,
   }));
   check(`nothing scrolls on ${label}`, overflow.x <= 0 && overflow.y <= 0, JSON.stringify(overflow));
+  await ctx.close();
+}
+
+// --------------------------------------------------------------------------
+console.log('\n# what the caption says');
+{
+  // Commons titles are filenames, so they arrive carrying camera serials,
+  // timestamps and frame numbers. ObjectName is usually just the filename
+  // again, so both paths are given the messy value here.
+  const CASES = [
+    ['File:Lake Bled DSC 4471.jpg', 'Lake Bled'],
+    ['File:Cirque de Gavarnie 01.jpg', 'Cirque de Gavarnie'],
+    ['File:Grand Prismatic Spring 20140923.jpg', 'Grand Prismatic Spring'],
+    ['File:Aiguille du Midi, 2019-07-14.jpg', 'Aiguille du Midi'],
+    ['File:Torres del Paine (Explore).jpg', 'Torres del Paine'],
+    ['File:Yosemite Valley - Wiki Loves Earth 2015.jpg', 'Yosemite Valley'],
+    ['File:MK14654 Mount Cook.jpg', 'Mount Cook'],
+    ['File:Milford Sound P1010234.jpg', 'Milford Sound'],
+    ['File:Iguazu Falls 100 4567.jpg', 'Iguazu Falls'],
+    ['File:Preikestolen (14).jpg', 'Preikestolen'],
+    ['File:Mount_Fuji_from_Lake_Kawaguchi.jpg', 'Mount Fuji from Lake Kawaguchi'],
+    // Numbers that belong to the place must survive.
+    ['File:Route 66 near Amboy.jpg', 'Route 66 near Amboy'],
+    ['File:Ben Nevis 1345 m.jpg', 'Ben Nevis 1345 m'],
+    ['File:Twelve Apostles, Victoria.jpg', 'Twelve Apostles, Victoria'],
+    // A real name whose first word looks like a camera prefix.
+    ["File:Sam Ford Fjord, Baffin Island.jpg", 'Sam Ford Fjord, Baffin Island'],
+  ];
+
+  const customPages = CASES.map(([title], i) => ({
+    ns: 6,
+    title,
+    imageinfo: [{
+      thumburl: `https://upload.wikimedia.org/caption-${i}.jpg`,
+      descriptionurl: 'https://commons.wikimedia.org/wiki/' + encodeURIComponent(title),
+      mime: 'image/jpeg', width: 4000, height: 3000,
+      extmetadata: {
+        ObjectName: { value: title.replace(/^File:/, '').replace(/\.jpg$/, '') },
+        Artist: { value: 'A Photographer' },
+        LicenseShortName: { value: 'CC BY-SA 4.0' },
+      },
+    }],
+  }));
+
+  const { ctx, page, errors } = await mount({ customPages });
+  await page.goto(APP);
+  await page.waitForSelector('.shot.active', { timeout: 10000 });
+
+  // Photos arrive shuffled, so collect every caption and compare as a set.
+  const seen = new Set();
+  for (let i = 0; i < CASES.length * 3 && seen.size < CASES.length; i++) {
+    const place = (await page.textContent('#caption .place')).trim();
+    if (place) seen.add(place);
+    await page.mouse.click(640, 400);
+    await page.waitForTimeout(90);
+  }
+
+  const want = CASES.map(([, expected]) => expected);
+  const missing = want.filter((w) => !seen.has(w));
+  check('every caption reads as a place, with no serials or dates left',
+    missing.length === 0, missing.length ? 'missing: ' + missing.join(' | ') : `${seen.size} captions`);
+
+  const leftovers = [...seen].filter((s) =>
+    /\bDSC\b|\bIMG\b|\bP\d{7}\b|\d{5,}|\(\s*\d+\s*\)|Wiki Loves|Explore/i.test(s));
+  check('nothing camera-generated survives in a caption',
+    leftovers.length === 0, leftovers.join(' | ') || 'none');
+
+  check('no page errors', errors.length === 0, errors.join(' | '));
+  await ctx.close();
+}
+
+{
+  // A file whose name is nothing but a serial falls back to the description
+  // rather than writing "DSC 4471" on the polaroid.
+  const customPages = [{
+    ns: 6,
+    title: 'File:DSC_4471.jpg',
+    imageinfo: [{
+      thumburl: 'https://upload.wikimedia.org/fallback-1.jpg',
+      descriptionurl: 'https://commons.wikimedia.org/wiki/File:DSC_4471.jpg',
+      mime: 'image/jpeg', width: 4000, height: 3000,
+      extmetadata: {
+        ObjectName: { value: 'DSC_4471' },
+        ImageDescription: { value: '<p>Dawn over Loch Maree, Scotland. Taken from the eastern shore.</p>' },
+        Artist: { value: 'A Photographer' },
+        LicenseShortName: { value: 'CC BY-SA 4.0' },
+      },
+    }],
+  }];
+
+  const { ctx, page } = await mount({ customPages });
+  await page.goto(APP);
+  await page.waitForSelector('.shot.active', { timeout: 10000 });
+  const place = (await page.textContent('#caption .place')).trim();
+  check('a serial-only filename falls back to the description',
+    place === 'Dawn over Loch Maree, Scotland', place);
   await ctx.close();
 }
 

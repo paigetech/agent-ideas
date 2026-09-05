@@ -554,6 +554,77 @@
     return entry ? plain(entry.value) : '';
   }
 
+  // Commons titles are filenames, and photographers upload what their camera
+  // named the file. Strip the machinery — serials, timestamps, contest tags,
+  // frame numbers — and keep the part that reads like a place.
+  //
+  // Returns '' when nothing but machinery was there, so the caller can fall
+  // back rather than write "DSC 4471" on the polaroid.
+  function tidyName(raw) {
+    if (!raw) return '';
+    var name = String(raw);
+
+    name = name.replace(/^File:/i, '');
+    name = name.replace(/\.(jpe?g|png|tiff?|webp|gif)$/i, '');
+    name = name.replace(/_/g, ' ');
+
+    // Camera-generated names: DSC_0123, IMG 4567, P1010234, GOPR0042.
+    name = name.replace(/\b(?:DSCN?|DSCF|IMG|IMGP|MG|CRW|SAM|PICT?|DJI|GOPR|GP|SDC)[ -]?\d{2,6}\b/gi, ' ');
+    name = name.replace(/\bP\d{7}\b/gi, ' ');
+
+    // Photographer or archive sigla: MK14654, AB-12345.
+    name = name.replace(/\b[A-Z]{2,4}[ -]?\d{4,6}\b/g, ' ');
+
+    // Dates, in the shapes Commons filenames use.
+    name = name.replace(/\b(?:19|20)\d{2}[-.\/](?:0?[1-9]|1[0-2])[-.\/](?:0?[1-9]|[12]\d|3[01])\b/g, ' ');
+    name = name.replace(/\b(?:0?[1-9]|[12]\d|3[01])[-.\/](?:0?[1-9]|1[0-2])[-.\/](?:19|20)\d{2}\b/g, ' ');
+    name = name.replace(/\b\d{2}-\d{2}-\d{2}\b/g, ' ');
+
+    // Any long run of digits is a timestamp or a serial, never a place.
+    name = name.replace(/\b\d{5,}\b/g, ' ');
+
+    // Editorial and contest tags.
+    name = name.replace(/\((?:\s*(?:explore[^)]*|edit(?:ed)?\s*\d*|cropped?|crop|retouch(?:ed)?|denoise[dr]?|hdr|stitch(?:ed)?|panorama)\s*)\)/gi, ' ');
+    name = name.replace(/\b(?:Wiki\s*Loves\s*(?:Monuments|Earth|Africa)|WLM|WLE)\b[^,;()]*/gi, ' ');
+
+    // Trailing years and frame numbers, repeatedly: "Iguazu Falls 100 4567" is
+    // a camera folder and a frame, not a place. Only ever at the end, so
+    // "Route 66 near Amboy" keeps its number.
+    var previous;
+    do {
+      previous = name;
+      name = name.replace(/[\s,;:_-]+(?:19|20)\d{2}\s*$/, '');
+      name = name.replace(/[\s,;:_-]+\d{1,4}[a-z]?\s*$/i, '');
+      name = name.replace(/[\s,;:_-]*\(\s*\d{1,4}\s*\)\s*$/, '');
+    } while (name !== previous);
+
+    // Tidy what the removals left behind.
+    name = name.replace(/\(\s*\)/g, ' ');
+    name = name.replace(/\s{2,}/g, ' ');
+    name = name.replace(/\s+([,.;:])/g, '$1');
+    name = name.replace(/([,;:])\s*(?=[,;:])/g, '');
+    name = name.replace(/^[\s,;:.\-\u2013\u2014_]+/, '');
+    name = name.replace(/[\s,;:.\-\u2013\u2014_]+$/, '');
+    name = name.trim();
+
+    // Only strip a bare camera prefix when it is the whole of what is left, so
+    // a real name like "Sam's Point" keeps its first word.
+    if (/^(?:DSCN?|DSCF|IMG|IMGP|MG|CRW|SAM|PICT?|DJI|GOPR|GP|SDC)$/i.test(name)) return '';
+
+    // Whatever survived has to read as words, not leftovers.
+    if (!/\p{L}{2}/u.test(name)) return '';
+
+    return name;
+  }
+
+  // Used only when the filename carried nothing but a serial number.
+  function shortDescription(extmetadata) {
+    var text = meta(extmetadata, 'ImageDescription');
+    if (!text) return '';
+    var first = (text.split(/[.!?](?:\s|$)/)[0] || '').trim();
+    return (first.length >= 3 && first.length <= 80) ? first : '';
+  }
+
   function api(params) {
     var url = new URL(API);
     var base = { format: 'json', formatversion: '2', origin: '*' };
@@ -623,10 +694,13 @@
     if (info.width && info.width < 1200) return null;
     if (NOT_A_PHOTO.test(page.title)) return null;
 
-    var name = meta(info.extmetadata, 'ObjectName');
-    if (!name) {
-      name = page.title.replace(/^File:/, '').replace(/\.[a-z0-9]+$/i, '').replace(/[_-]+/g, ' ');
-    }
+    // ObjectName is usually just the filename again, so both go through the
+    // same tidying. If everything was machinery, try the description, and only
+    // then give up and show the raw filename.
+    var name = tidyName(meta(info.extmetadata, 'ObjectName')) ||
+               tidyName(page.title) ||
+               shortDescription(info.extmetadata) ||
+               page.title.replace(/^File:/, '').replace(/\.[a-z0-9]+$/i, '').replace(/[_-]+/g, ' ');
 
     return {
       key: page.title,
