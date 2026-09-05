@@ -132,10 +132,16 @@ It's a prototype, and these are the honest gaps:
 ## Deploying
 
 `.github/workflows/pages.yml` runs the tests on every push and pull request,
-and publishes to GitHub Pages when they pass on `main`. It calls
-`actions/configure-pages` with `enablement: true`, so the first successful run
-turns Pages on by itself — there is no setting to go and find. The site lands at
+and publishes to GitHub Pages when they pass on `main`. The site lands at
 `https://<user>.github.io/<repo>/`.
+
+**Pages has to be switched on once by hand** before the first deploy will work:
+**Settings → Pages → Build and deployment → Source: GitHub Actions**. The
+workflow does call `actions/configure-pages` with `enablement: true`, but the
+Actions token can request Pages *deployments* without being able to create the
+Pages *site*, so on most repositories that step fails with `Resource not
+accessible by integration` until the setting is made. Once it is, the step is a
+no-op and every later push deploys on its own.
 
 Only `index.html`, the icons, the manifest and the font licence are published.
 `scripts/stage-site.sh` decides that, and `test/site.test.mjs` stages with the
@@ -143,10 +149,9 @@ same script and drives the result over HTTP under a subpath — so a relative pa
 that only works from `file://`, a missing asset, or anything reaching for a
 third-party host fails CI rather than the live site.
 
-**One thing to know first: Pages availability depends on the repository.** It is
-free for public repositories. For a **private** repository it needs GitHub Pro,
-Team or Enterprise — otherwise the deploy job fails when it tries to enable
-Pages.
+**Pages availability depends on the repository.** It is free for public
+repositories. For a **private** repository it needs GitHub Pro, Team or
+Enterprise.
 
 **And in every one of those cases the published site itself is public.** Making
 a private repo's Pages site private requires Enterprise. Deploying does not

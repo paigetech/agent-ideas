@@ -59,9 +59,13 @@ jobs:
       - name: Configure Pages
         uses: actions/configure-pages@v5
         with:
-          # Switches Pages on the first time this runs, so there is no setting
-          # to find by hand. Needs a plan where Pages is available for this
-          # repository; on a private repo that means Pro, Team or Enterprise.
+          # Best effort only. The Actions token can request Pages deployments
+          # but usually cannot create the Pages site itself — that needs admin
+          # rights, and this step fails with "Resource not accessible by
+          # integration" until someone turns Pages on once under
+          # Settings -> Pages -> Source: GitHub Actions. Left enabled so the
+          # step is a no-op afterwards, and so it recovers on its own if Pages
+          # is ever switched off in a repo where the token does have the rights.
           enablement: true
 
       - uses: actions/upload-pages-artifact@v3
