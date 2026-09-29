@@ -1,6 +1,8 @@
 # Carry — YouTube videos on an iPhone that has no YouTube
 
-*Working name. Design only; nothing here is built yet.*
+*Working name. Status: version zero (iCloud Drive → Files app, 1080p) is built;
+see [README.md](README.md). Everything from the podcast feed onward is still
+design only.*
 
 ## The problem
 

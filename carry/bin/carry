@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+# carry — download YouTube videos into iCloud Drive so they show up in the
+# Files app on the phone. Version zero: no feed, no server, just files.
+#
+#   carry URL [URL...]          download each URL
+#   carry -                     read URLs from stdin, one per line
+#   carry --dry-run URL...      resolve title and format, download nothing
+#   carry --playlist URL        a playlist URL fetches every video, not just one
+#
+# Config (environment, all optional):
+#   CARRY_DIR      where finished files land.
+#                  default: iCloud Drive/Carry
+#   CARRY_HEIGHT   max video height. default: 1080
+#   CARRY_STAGING  where downloads happen before the atomic move into CARRY_DIR
+#                  (keeps iCloud from syncing half-written files).
+#                  default: ~/.carry/staging
+set -euo pipefail
+
+CARRY_DIR="${CARRY_DIR:-$HOME/Library/Mobile Documents/com~apple~CloudDocs/Carry}"
+CARRY_HEIGHT="${CARRY_HEIGHT:-1080}"
+CARRY_STAGING="${CARRY_STAGING:-$HOME/.carry/staging}"
+ARCHIVE="${CARRY_ARCHIVE:-$HOME/.carry/done.txt}"
+
+usage() { sed -n '2,/^set -e/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; exit 2; }
+
+dry_run=0
+playlist=0
+urls=()
+for arg in "$@"; do
+  case "$arg" in
+    -h|--help) usage ;;
+    --dry-run|-n) dry_run=1 ;;
+    --playlist) playlist=1 ;;
+    -) while IFS= read -r line; do [ -n "$line" ] && urls+=("$line"); done ;;
+    -*) echo "carry: unknown option $arg" >&2; usage ;;
+    *) urls+=("$arg") ;;
+  esac
+done
+[ "${#urls[@]}" -gt 0 ] || usage
+
+for u in "${urls[@]}"; do
+  case "$u" in
+    http://*|https://*) ;;
+    *) echo "carry: not a URL: $u" >&2; exit 2 ;;
+  esac
+done
+
+command -v yt-dlp >/dev/null || { echo "carry: yt-dlp not installed. brew install yt-dlp ffmpeg" >&2; exit 1; }
+if [ "$dry_run" = 0 ]; then
+  command -v ffmpeg >/dev/null || { echo "carry: ffmpeg not installed. brew install ffmpeg" >&2; exit 1; }
+  mkdir -p "$CARRY_DIR" "$CARRY_STAGING" "$(dirname "$ARCHIVE")"
+fi
+
+# H.264 video + AAC audio in an mp4, because that is what the iPhone's own
+# player handles without fuss. YouTube's "best" is usually VP9 or AV1, which
+# the Files app does not reliably play. Fall back down the height ladder in
+# H.264 before accepting anything else.
+FORMAT="bv*[height<=${CARRY_HEIGHT}][vcodec^=avc1]+ba[ext=m4a]"
+FORMAT="$FORMAT/bv*[vcodec^=avc1]+ba[ext=m4a]"
+FORMAT="$FORMAT/b[height<=${CARRY_HEIGHT}][ext=mp4]/b"
+
+common=(
+  -f "$FORMAT"
+  --merge-output-format mp4
+  --embed-metadata
+  --no-mtime
+)
+if [ "$playlist" = 1 ]; then common+=(--yes-playlist); else common+=(--no-playlist); fi
+# YouTube extraction now wants a JavaScript runtime. Use whichever is around.
+for rt in deno node; do
+  if command -v "$rt" >/dev/null; then common+=(--js-runtimes "$rt"); break; fi
+done
+
+ok=0; failed=0; skipped=0
+for u in "${urls[@]}"; do
+  echo "==> $u"
+  if [ "$dry_run" = 1 ]; then
+    if yt-dlp "${common[@]}" --simulate \
+         --print "    %(title)s" \
+         --print "    %(duration_string)s  %(height)sp %(vcodec)s+%(acodec)s  ~%(filesize_approx)s bytes" \
+         "$u"; then ok=$((ok+1)); else failed=$((failed+1)); fi
+    continue
+  fi
+
+  # Already downloaded once? yt-dlp's archive says so and skips it.
+  if [ "$playlist" = 0 ] && grep -q " $(yt-dlp --no-playlist --print id "$u" 2>/dev/null)$" "$ARCHIVE" 2>/dev/null; then
+    echo "    already in Carry, skipping"
+    skipped=$((skipped+1)); continue
+  fi
+
+  work="$(mktemp -d "$CARRY_STAGING/XXXXXX")"
+  if yt-dlp "${common[@]}" \
+       --download-archive "$ARCHIVE" \
+       --print "    %(title)s  (%(duration_string)s, %(height)sp)" \
+       -o "$work/%(title).80B [%(id)s].%(ext)s" \
+       "$u"; then
+    # Move each finished file into iCloud in one step (one file, or a
+    # playlist's worth). A URL already in the archive produces none.
+    n=0
+    while IFS= read -r f; do
+      mv "$f" "$CARRY_DIR/"
+      size="$(du -h "$CARRY_DIR/$(basename "$f")" | cut -f1)"
+      echo "    -> $(basename "$f")  ($size)"
+      n=$((n+1))
+    done < <(find "$work" -maxdepth 1 -type f ! -name '.*')
+    if [ "$n" -gt 0 ]; then ok=$((ok+n))
+    else echo "    nothing new to download"; skipped=$((skipped+1)); fi
+  else
+    failed=$((failed+1))
+  fi
+  rm -rf "$work"
+done
+
+echo
+if [ "$dry_run" = 1 ]; then echo "carry: $ok resolved, $failed failed"
+else echo "carry: $ok downloaded, $skipped skipped, $failed failed"; fi
+[ "$dry_run" = 1 ] || echo "carry: in Files under iCloud Drive › $(basename "$CARRY_DIR") once iCloud finishes syncing"
+[ "$failed" = 0 ]
